@@ -1,0 +1,34 @@
+/* Optional: nicer scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+/* Make the answer text more readable */
+.whitespace-pre-wrap {
+  line-height: 1.7;
+  font-size: 0.95rem;
+}
+
+/* Slightly nicer tables if the model outputs them as text */
+.whitespace-pre-wrap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+}
+.prose-content {
+  line-height: 1.7;
+}
+
+.prose-content pre {
+  margin: 1rem 0;
+}
+
+.prose-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
