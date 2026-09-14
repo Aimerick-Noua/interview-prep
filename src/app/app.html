@@ -263,12 +263,23 @@
             [class.hover:bg-indigo-100]="speakingSection !== 'engineer'"
           >
             <!-- Mic icon (idle) -->
-            <svg *ngIf="speakingSection !== 'engineer'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="12" y1="19" x2="12" y2="23"></line>
-              <line x1="8" y1="23" x2="16" y2="23"></line>
-            </svg>
+          @if (speakingSection !== 'engineer') {
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="20"
+    height="20"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+    <path d="M15.5 8.5a5 5 0 0 1 0 7"></path>
+    <path d="M19 5a9 9 0 0 1 0 14"></path>
+  </svg>
+}
             <!-- Stop icon (while speaking) -->
             <svg *ngIf="speakingSection === 'engineer'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
               <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
