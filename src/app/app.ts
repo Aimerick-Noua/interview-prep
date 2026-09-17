@@ -244,141 +244,417 @@ export class App implements OnInit, OnDestroy {
     this.showApiKeyModal = false;
   }
 
-  generateAnswer(regenerate = false) {
-    if (!this.selectedQuestion) return;
+generateAnswer(regenerate = false): void {
+  if (!this.selectedQuestion) return;
 
-    if (!this.groqApiKey) {
-      this.openApiKeyModal();
-      return;
-    }
-
-    if (this.currentAnswer && !regenerate) return;
-
-    this.stopSpeech();
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.currentAnswer = null;
-    this.cdr.detectChanges();
-
-    const topic = this.activeTab === 'angular' ? 'Angular' : 'Java';
-    let prompt = '';
-
-    if (this.includeKidVersion) {
-      prompt = `You are a senior ${topic} interviewer.
-
-Answer the question below in **exactly two short sections**.
-
-## 🧒 Explain like I'm 12
-- Maximum 8-10 short sentences or a small table.
-- Use simple analogies only.
-- No jargon without a quick explanation.
-
-## 🛠️ Software Engineer / Interview Answer
-- Be concise and high-signal.
-- Structure:
-  1. Precise technical explanation (1 short paragraph)
-  2. Key points (bullet list, max 5-6 bullets)
-  3. One short code example (if useful)
-  4. 2-3 common pitfalls (if any)
-
-Do NOT write long tables, long bottom-line summaries, or disassembled bytecode unless absolutely necessary.
-Keep the whole answer under 450 words.
-
-Question: ${this.selectedQuestion.question}`;
-    } else {
-      prompt = `You are a senior ${topic} interviewer.
-
-Answer the question below in a concise, high-signal way.
-
-## 🛠️ Software Engineer / Interview Answer
-- Precise technical explanation (1 short paragraph)
-- Key points (bullet list, max 5-6 bullets)
-- One short code example (if useful)
-- 2-3 common pitfalls (if any)
-
-Do NOT write long tables, long bottom-line summaries, or disassembled bytecode.
-Keep the whole answer under 350 words.
-
-Question: ${this.selectedQuestion.question}`;
-    }
-
-    const body = {
-      model: 'openai/gpt-oss-120b',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a senior ${topic} teacher. Always use the exact ## headings requested when multiple sections are asked.`
-        },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.55,
-      max_tokens: 2500
-    };
-
-    const headers = new HttpHeaders({
-      'Authorization': `Bearer ${this.groqApiKey}`,
-      'Content-Type': 'application/json'
-    });
-
-    this.http
-      .post<any>('https://api.groq.com/openai/v1/chat/completions', body, { headers })
-      .pipe(
-        finalize(() => {
-          this.isLoading = false;
-          this.cdr.detectChanges();
-        })
-      )
-      .subscribe({
-        next: (res) => {
-          try {
-            const content: string = res?.choices?.[0]?.message?.content ?? '';
-
-            let kid = '';
-            let engineer = '';
-
-            if (this.includeKidVersion) {
-              const engineerMarker = '## 🛠️ Software Engineer / Interview Answer';
-              const kidMarker = '## 🧒 Explain like I\'m 12';
-
-              if (content.includes(engineerMarker)) {
-                const parts = content.split(engineerMarker);
-                kid = parts[0]
-                  .replace(kidMarker, '')
-                  .replace(/^[\s#]*🧒?\s*Explain like I['’]m 12/i, '')
-                  .trim();
-                engineer = (parts[1] || '').trim();
-              } else {
-                engineer = content;
-                kid = '';
-              }
-            } else {
-              // Only engineer version
-              engineer = content
-                .replace(/## 🛠️ Software Engineer \/ Interview Answer/i, '')
-                .trim();
-              kid = '';
-            }
-
-            const answer: CachedAnswer = {
-              kid: kid,
-              engineer: engineer || content,
-              generatedAt: new Date().toISOString()
-            };
-
-            this.saveAnswer(this.selectedQuestion!.id, answer);
-            this.cdr.detectChanges();
-          } catch (err: any) {
-            this.errorMessage = 'Error while processing the answer: ' + err.message;
-          }
-        },
-        error: (err) => {
-          this.errorMessage =
-            err?.error?.error?.message ||
-            err?.message ||
-            'Request failed';
-        }
-      });
+  if (!this.groqApiKey) {
+    this.openApiKeyModal();
+    return;
   }
+
+  if (this.currentAnswer && !regenerate) return;
+
+  this.stopSpeech();
+  this.isLoading = true;
+  this.errorMessage = '';
+  this.currentAnswer = null;
+  this.cdr.detectChanges();
+
+  const topic = this.activeTab === 'angular' ? 'Angular' : 'Java';
+  const question = this.selectedQuestion.question;
+
+  const prompt = `
+You are a senior ${topic} engineer, software architect, and technical interviewer
+with 15+ years of production experience.
+
+Your job is to teach the concept deeply enough that I can:
+1. Understand what it actually means.
+2. Explain it confidently in a technical interview.
+3. Understand what happens internally.
+4. Know when and why to use it in production.
+5. Discuss trade-offs and answer senior-level follow-up questions.
+
+Do NOT give me a shallow textbook definition.
+Focus on engineering reasoning, production behavior, and interview usefulness.
+
+QUESTION:
+${question}
+
+${this.includeKidVersion ? `
+## 🧒 Explain like I'm 12
+
+Explain the core idea using a simple real-world analogy.
+
+Rules:
+- Keep it short and intuitive.
+- Avoid unnecessary technical terminology.
+- If you use a technical term, explain it briefly.
+- The goal is to make the concept easy to visualize.
+` : ''}
+
+## 🛠️ Software Engineer / Interview Answer
+
+### 1. What is it?
+
+Give a precise definition.
+
+Explain:
+- What the concept, feature, API, pattern, or mechanism actually is.
+- What problem category it belongs to.
+- Clearly distinguish between a language feature, JDK/API feature, JVM behavior, framework behavior, or architectural concept when relevant.
+
+Do not start with vague textbook wording.
+
+### 2. Why does it exist?
+
+Explain the engineering problem that led to this concept.
+
+Answer:
+- What problem does it solve?
+- What would be difficult, unsafe, slow, repetitive, or impossible without it?
+- What problem does it prevent or simplify?
+- Why would an engineer choose it instead of a simpler alternative?
+
+Focus on the motivation, not just the definition.
+
+### 3. How does it work internally?
+
+Explain the important mechanics behind it.
+
+Depending on the topic, discuss the relevant internal behavior such as:
+- JVM behavior
+- memory
+- stack/heap/metaspace
+- object lifecycle
+- bytecode only when genuinely useful
+- collections internals
+- hashing
+- concurrency
+- threads
+- locks
+- atomicity
+- visibility
+- ordering
+- happens-before
+- synchronization
+- garbage collection
+- CPU/cache implications
+- Spring container behavior
+- dependency injection
+- proxies
+- transactions
+- HTTP/network behavior
+- Angular change detection
+- RxJS
+- signals
+- rendering
+- browser behavior
+
+Do NOT dump implementation details just to sound advanced.
+
+Clearly distinguish:
+- guaranteed language/API behavior
+- framework behavior
+- JVM implementation details
+- implementation details that may vary by version
+
+### 4. When would I use it?
+
+Give realistic production situations.
+
+Include:
+- When it is appropriate.
+- When it is NOT appropriate.
+- A realistic enterprise example.
+- If there is a common alternative, explain when you would choose that alternative instead.
+
+Prefer examples involving:
+- backend services
+- REST APIs
+- microservices
+- databases
+- distributed systems
+- concurrent applications
+- financial systems
+- cloud applications
+- enterprise Angular applications
+
+Use concrete engineering reasoning rather than generic examples.
+
+### 5. What are the trade-offs?
+
+Discuss the important engineering trade-offs.
+
+Include relevant points such as:
+- performance
+- memory
+- CPU
+- concurrency
+- scalability
+- complexity
+- maintainability
+- debugging
+- reliability
+- security
+- consistency
+- operational cost
+- developer productivity
+
+Do not invent performance numbers or benchmarks.
+
+If there is no meaningful trade-off for a particular point, do not force one.
+
+## Production Example
+
+Give ONE realistic production scenario showing how this concept would appear in a real system.
+
+Explain:
+- the problem
+- the design decision
+- why this concept is useful
+- one important trade-off
+
+Keep it practical rather than theoretical.
+
+## Code Example
+
+Provide ONE clean, realistic code example when code makes sense.
+
+Requirements:
+- Prefer modern ${topic} practices.
+- Keep the example small enough to explain during an interview.
+- Use meaningful names.
+- Explain the important lines.
+- Avoid unnecessary boilerplate.
+- Do not use deprecated APIs unless the question specifically concerns them.
+
+If code is not appropriate for the concept, explain the concept without forcing code.
+
+## Common Interview Traps
+
+Give 3-5 mistakes candidates commonly make.
+
+For each trap:
+- state the incorrect assumption
+- explain the correct understanding
+
+Prioritize traps that distinguish a strong engineer from someone who memorized definitions.
+
+## Senior Follow-Up Questions
+
+Give 4-6 likely follow-up questions an experienced interviewer could ask.
+
+These should progressively become harder.
+
+Include questions involving:
+- internals
+- edge cases
+- concurrency where relevant
+- performance where relevant
+- production design
+- trade-offs
+
+Do NOT answer all of them unless a very short answer is necessary for context.
+
+## Interview Memory
+
+Finish with 3-5 concise points I should remember when answering this question in an interview.
+
+These should be memorable principles, not a generic summary.
+
+GENERAL RULES:
+
+- Be technically accurate.
+- Prefer depth over buzzwords.
+- Explain WHY, not only WHAT.
+- Use production-oriented reasoning.
+- Do not fabricate behavior, benchmarks, or metrics.
+- Do not invent APIs or framework behavior.
+- If behavior is version-dependent, say so.
+- If something is an implementation detail rather than a guarantee, explicitly say so.
+- Use concise paragraphs and bullets.
+- Avoid giant tables.
+- Avoid unnecessary bytecode or source-code dumps.
+- Do not repeat the same explanation in multiple sections.
+- Assume I already know basic programming syntax.
+- Explain advanced concepts clearly without talking down to an experienced developer.
+- The answer should sound like something a strong senior engineer could actually say in an interview.
+- For complex topics, use enough detail to properly explain the concept. Do not impose an artificial short word limit.
+- For simple topics, stay concise.
+
+IMPORTANT FOR JAVA QUESTIONS:
+
+When relevant, distinguish clearly between:
+
+Java language feature
+→ JDK/API behavior
+→ JVM behavior
+→ operating-system behavior
+
+For concurrency questions, explicitly reason about:
+atomicity, visibility, ordering, happens-before, race conditions, thread safety, contention, deadlock, starvation, and livelock when applicable.
+
+For collection questions, explain the relevant data structure and complexity when useful.
+
+For JVM questions, explain the runtime behavior rather than only naming components.
+
+IMPORTANT FOR ANGULAR QUESTIONS:
+
+When relevant, distinguish between:
+Angular framework behavior
+→ TypeScript behavior
+→ JavaScript runtime behavior
+→ browser behavior
+
+Discuss change detection, signals, RxJS, dependency injection, rendering, lifecycle, and performance only when relevant.
+
+Do not force concepts that are unrelated to the question.
+
+The final answer must preserve the exact section headings above because the application parses the response using these headings.
+`;
+
+  const body = {
+    model: 'openai/gpt-oss-120b',
+    messages: [
+      {
+        role: 'system',
+        content: `
+You are a senior ${topic} engineer, software architect, and technical interviewer.
+
+Teach production-grade engineering, not memorized textbook definitions.
+
+Your answers must help the candidate:
+- understand the concept deeply
+- explain it clearly in an interview
+- reason about internals
+- make production decisions
+- discuss trade-offs
+- handle senior-level follow-up questions
+
+Always preserve the exact Markdown headings requested by the user.
+Do not rename, remove, or reorder the requested headings.
+`
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ],
+    temperature: 0.45,
+    max_tokens: 4000
+  };
+
+  const headers = new HttpHeaders({
+    Authorization: `Bearer ${this.groqApiKey}`,
+    'Content-Type': 'application/json'
+  });
+
+  this.http
+    .post<unknown>(
+      'https://api.groq.com/openai/v1/chat/completions',
+      body,
+      { headers }
+    )
+    .pipe(
+      finalize(() => {
+        this.isLoading = false;
+        this.cdr.detectChanges();
+      })
+    )
+    .subscribe({
+      next: (res) => {
+        try {
+          const response = res as {
+            choices?: Array<{
+              message?: {
+                content?: string;
+              };
+            }>;
+          };
+
+          const content =
+            response.choices?.[0]?.message?.content?.trim() ?? '';
+
+          if (!content) {
+            this.errorMessage = 'The model returned an empty answer.';
+            return;
+          }
+
+          let kid = '';
+          let engineer = '';
+
+          const engineerMarker =
+            '## 🛠️ Software Engineer / Interview Answer';
+
+          const kidMarker =
+            "## 🧒 Explain like I'm 12";
+
+          if (this.includeKidVersion) {
+            const engineerIndex = content.indexOf(engineerMarker);
+
+            if (engineerIndex >= 0) {
+              const kidContent = content
+                .substring(0, engineerIndex)
+                .replace(kidMarker, '')
+                .trim();
+
+              const engineerContent = content
+                .substring(
+                  engineerIndex + engineerMarker.length
+                )
+                .trim();
+
+              kid = kidContent;
+              engineer = engineerContent;
+            } else {
+              // Fallback if the model did not follow the heading format.
+              engineer = content;
+            }
+          } else {
+            engineer = content
+              .replace(
+                /^## 🛠️ Software Engineer\s*\/\s*Interview Answer/im,
+                ''
+              )
+              .trim();
+          }
+
+          const answer: CachedAnswer = {
+            kid,
+            engineer: engineer || content,
+            generatedAt: new Date().toISOString()
+          };
+
+          this.saveAnswer(this.selectedQuestion!.id, answer);
+          this.cdr.detectChanges();
+        } catch (err: unknown) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : 'Unknown error';
+
+          this.errorMessage =
+            `Error while processing the answer: ${message}`;
+        }
+      },
+
+      error: (err: unknown) => {
+        const error = err as {
+          error?: {
+            error?: {
+              message?: string;
+            };
+          };
+          message?: string;
+        };
+
+        this.errorMessage =
+          error?.error?.error?.message ||
+          error?.message ||
+          'Request failed.';
+      }
+    });
+}
 
   renderMarkdown(text: string): SafeHtml {
     if (!text) return '';
