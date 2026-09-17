@@ -61,16 +61,6 @@ export class App implements OnInit, OnDestroy {
   errorMessage = '';
   includeKidVersion = false;
 
-  // ---- Speech (Text-to-Speech) ----
-  private synth = window.speechSynthesis;
-  speakingSection: SpeechSection = null;
-
-  availableVoices: SpeechSynthesisVoice[] = [];
-  selectedVoiceURI: string = '';
-  showVoiceModal = false;
-
-  speechRate: number = 1;
-
   // ---- Swipe handling ----
   private touchStartX = 0;
   private touchStartY = 0;
@@ -664,127 +654,427 @@ Do not rename, remove, or reorder the requested headings.
 
   // ---- Text-to-Speech ----
 
-  private loadVoices() {
-    const voices = this.synth.getVoices();
-    if (!voices.length) return;
+private synth = window.speechSynthesis;
 
-    // English voices first (most relevant here), rest after
-    this.availableVoices = [...voices].sort((a, b) => {
-      const aEn = a.lang.startsWith('en') ? 0 : 1;
-      const bEn = b.lang.startsWith('en') ? 0 : 1;
-      if (aEn !== bEn) return aEn - bEn;
-      return a.name.localeCompare(b.name);
-    });
+speakingSection: SpeechSection = null;
+availableVoices: SpeechSynthesisVoice[] = [];
+selectedVoiceURI = '';
+showVoiceModal = false;
+speechRate = 1;
 
-    // Pick a sane default the first time, if nothing saved yet
-    if (!this.selectedVoiceURI) {
-      const defaultVoice =
-        this.availableVoices.find(v => v.lang.startsWith('en') && /Google|Natural|Online/i.test(v.name)) ||
-        this.availableVoices.find(v => v.lang.startsWith('en')) ||
-        this.availableVoices[0];
-      if (defaultVoice) this.selectedVoiceURI = defaultVoice.voiceURI;
+// Current speech queue
+private speechChunks: string[] = [];
+private speechChunkIndex = 0;
+private speechGeneration = 0;
+
+private loadVoices(): void {
+  const voices = this.synth.getVoices();
+
+  if (!voices.length) {
+    return;
+  }
+
+  this.availableVoices = [...voices].sort((a, b) => {
+    const aEn = a.lang.toLowerCase().startsWith('en') ? 0 : 1;
+    const bEn = b.lang.toLowerCase().startsWith('en') ? 0 : 1;
+
+    if (aEn !== bEn) {
+      return aEn - bEn;
     }
 
-    this.cdr.detectChanges();
+    return a.name.localeCompare(b.name);
+  });
+
+  // Restore saved voice if it still exists.
+  const savedVoiceExists = this.availableVoices.some(
+    voice => voice.voiceURI === this.selectedVoiceURI
+  );
+
+  if (!savedVoiceExists) {
+    const defaultVoice =
+      this.availableVoices.find(
+        voice =>
+          voice.lang.toLowerCase().startsWith('en') &&
+          /Google|Natural|Online/i.test(voice.name)
+      ) ??
+      this.availableVoices.find(
+        voice => voice.lang.toLowerCase().startsWith('en')
+      ) ??
+      this.availableVoices[0];
+
+    if (defaultVoice) {
+      this.selectedVoiceURI = defaultVoice.voiceURI;
+    }
   }
 
-  get selectedVoice(): SpeechSynthesisVoice | undefined {
-    return this.availableVoices.find(v => v.voiceURI === this.selectedVoiceURI);
+  this.cdr.detectChanges();
+}
+
+get selectedVoice(): SpeechSynthesisVoice | undefined {
+  return this.availableVoices.find(
+    voice => voice.voiceURI === this.selectedVoiceURI
+  );
+}
+
+openVoiceModal(): void {
+  this.loadVoices();
+  this.showVoiceModal = true;
+}
+
+selectVoice(voice: SpeechSynthesisVoice): void {
+  this.selectedVoiceURI = voice.voiceURI;
+
+  localStorage.setItem(
+    'ttsVoiceURI',
+    voice.voiceURI
+  );
+
+  // If something is currently speaking, restart it
+  // using the newly selected voice.
+  if (this.speakingSection && this.currentAnswer) {
+    const section = this.speakingSection;
+
+    const text =
+      section === 'kid'
+        ? this.currentAnswer.kid
+        : this.currentAnswer.engineer;
+
+    this.stopSpeech();
+
+    setTimeout(() => {
+      this.toggleSpeech(text, section);
+    }, 100);
+  }
+}
+
+previewVoice(
+  voice: SpeechSynthesisVoice,
+  event: Event
+): void {
+  event.stopPropagation();
+
+  this.speechGeneration++;
+
+  this.synth.cancel();
+
+  const utterance =
+    new SpeechSynthesisUtterance(
+      'Hi, this is a preview of my voice.'
+    );
+
+  utterance.voice = voice;
+  utterance.rate = this.speechRate;
+  utterance.pitch = 1;
+
+  this.synth.speak(utterance);
+}
+
+setSpeechRate(rate: number | string): void {
+  const parsedRate =
+    typeof rate === 'number'
+      ? rate
+      : Number.parseFloat(rate);
+
+  if (!Number.isFinite(parsedRate)) {
+    return;
   }
 
-  openVoiceModal() {
-    this.loadVoices();
-    this.showVoiceModal = true;
+  this.speechRate = Math.min(
+    2,
+    Math.max(0.5, parsedRate)
+  );
+
+  localStorage.setItem(
+    'ttsRate',
+    this.speechRate.toString()
+  );
+
+  if (this.speakingSection && this.currentAnswer) {
+    const section = this.speakingSection;
+
+    const text =
+      section === 'kid'
+        ? this.currentAnswer.kid
+        : this.currentAnswer.engineer;
+
+    this.stopSpeech();
+
+    setTimeout(() => {
+      this.toggleSpeech(text, section);
+    }, 100);
+  }
+}
+
+resetSpeechRate(): void {
+  this.setSpeechRate(1);
+}
+
+toggleSpeech(
+  text: string,
+  section: 'kid' | 'engineer'
+): void {
+  if (!text?.trim()) {
+    return;
   }
 
-  selectVoice(voice: SpeechSynthesisVoice) {
-    this.selectedVoiceURI = voice.voiceURI;
-    localStorage.setItem('ttsVoiceURI', voice.voiceURI);
+  // Clicking the currently speaking section stops it.
+  if (this.speakingSection === section) {
+    this.stopSpeech();
+    return;
   }
 
-  previewVoice(voice: SpeechSynthesisVoice, event: Event) {
-    event.stopPropagation();
-    this.synth.cancel();
-    const utterance = new SpeechSynthesisUtterance('Hi, this is a preview of my voice.');
+  // Cancel anything currently speaking.
+  this.stopSpeech();
+
+  const cleanText = this.stripMarkdown(text);
+
+  if (!cleanText) {
+    return;
+  }
+
+  this.speechChunks = this.chunkText(cleanText);
+  this.speechChunkIndex = 0;
+
+  this.speakingSection = section;
+
+  // Used to invalidate callbacks from older speech sessions.
+  const generation = ++this.speechGeneration;
+
+  this.speakNextChunk(generation);
+}
+
+private speakNextChunk(generation: number): void {
+  // Ignore callbacks belonging to an old speech session.
+  if (generation !== this.speechGeneration) {
+    return;
+  }
+
+  if (this.speechChunkIndex >= this.speechChunks.length) {
+    this.finishSpeech(generation);
+    return;
+  }
+
+  const chunk =
+    this.speechChunks[this.speechChunkIndex];
+
+  const utterance =
+    new SpeechSynthesisUtterance(chunk);
+
+  utterance.rate = this.speechRate;
+  utterance.pitch = 1;
+
+  const voice = this.selectedVoice;
+
+  if (voice) {
     utterance.voice = voice;
-    utterance.rate = this.speechRate;
-    this.synth.speak(utterance);
   }
 
-  setSpeechRate(rate: number | string) {
-    this.speechRate = parseFloat(rate as string);
-    localStorage.setItem('ttsRate', this.speechRate.toString());
-
-    // If something is playing right now, restart it at the new rate
-    // (speechSynthesis doesn't support changing rate mid-utterance).
-    if (this.speakingSection && this.currentAnswer) {
-      const text = this.speakingSection === 'kid' ? this.currentAnswer.kid : this.currentAnswer.engineer;
-      const section = this.speakingSection;
-      this.synth.cancel();
-      this.speakingSection = null;
-      // tiny delay so the cancel fully clears before restarting
-      setTimeout(() => this.toggleSpeech(text, section), 50);
-    }
-  }
-
-  resetSpeechRate() {
-    this.setSpeechRate(1);
-  }
-
-  toggleSpeech(text: string, section: 'kid' | 'engineer') {
-    if (!text) return;
-
-    // Clicking the same section again -> stop.
-    if (this.speakingSection === section) {
-      this.stopSpeech();
+  utterance.onend = () => {
+    if (generation !== this.speechGeneration) {
       return;
     }
 
-    // Switching sections -> cancel whatever was playing first.
+    this.speechChunkIndex++;
+
+    // Give Chromium a tiny amount of time between
+    // utterances. This prevents some browser TTS
+    // implementations from dropping the next chunk.
+    setTimeout(() => {
+      this.speakNextChunk(generation);
+    }, 40);
+  };
+
+  utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
+    if (generation !== this.speechGeneration) {
+      return;
+    }
+
+    // "canceled" and "interrupted" are expected when
+    // the user presses stop or switches sections.
+    if (
+      event.error === 'canceled' ||
+      event.error === 'interrupted'
+    ) {
+      return;
+    }
+
+    console.error(
+      'Speech synthesis error:',
+      event.error
+    );
+
+    this.finishSpeech(generation);
+  };
+
+  this.synth.speak(utterance);
+
+  this.cdr.detectChanges();
+}
+
+private finishSpeech(generation: number): void {
+  if (generation !== this.speechGeneration) {
+    return;
+  }
+
+  this.speechChunks = [];
+  this.speechChunkIndex = 0;
+  this.speakingSection = null;
+
+  this.cdr.detectChanges();
+}
+
+private stopSpeech(): void {
+  // Invalidate all existing utterance callbacks.
+  this.speechGeneration++;
+
+  this.speechChunks = [];
+  this.speechChunkIndex = 0;
+  this.speakingSection = null;
+
+  if (this.synth.speaking || this.synth.pending) {
     this.synth.cancel();
+  }
+}
 
-    const utterance = new SpeechSynthesisUtterance(this.stripMarkdown(text));
-    utterance.rate = this.speechRate;
-    utterance.pitch = 1;
+private chunkText(text: string): string[] {
+  const normalized = text
+    .replace(/\s+/g, ' ')
+    .trim();
 
-    if (this.selectedVoice) {
-      utterance.voice = this.selectedVoice;
+  if (!normalized) {
+    return [];
+  }
+
+  /*
+   * Chromium speech synthesis becomes unreliable with
+   * very long utterances.
+   *
+   * Keep each utterance around 180-220 words.
+   */
+  const sentences =
+    normalized.match(
+      /[^.!?]+[.!?]+|[^.!?]+$/g
+    ) ?? [normalized];
+
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+
+    if (!trimmed) {
+      continue;
     }
 
-    utterance.onend = () => {
-      this.speakingSection = null;
-      this.cdr.detectChanges();
-    };
-    utterance.onerror = () => {
-      this.speakingSection = null;
-      this.cdr.detectChanges();
-    };
+    const candidate = current
+      ? `${current} ${trimmed}`
+      : trimmed;
 
-    this.speakingSection = section;
-    this.synth.speak(utterance);
-  }
-
-  private stopSpeech() {
-    if (this.synth.speaking || this.synth.pending) {
-      this.synth.cancel();
+    if (this.wordCount(candidate) <= 200) {
+      current = candidate;
+      continue;
     }
-    this.speakingSection = null;
+
+    if (current) {
+      chunks.push(current);
+      current = '';
+    }
+
+    // A single very long sentence can still exceed
+    // the desired chunk size, so split it by words.
+    if (this.wordCount(trimmed) > 200) {
+      chunks.push(
+        ...this.splitLongText(trimmed, 180)
+      );
+    } else {
+      current = trimmed;
+    }
   }
 
-  private stripMarkdown(md: string): string {
-    return md
-      .replace(/```[\s\S]*?```/g, ' Code example omitted. ')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/!\[.*?\]\(.*?\)/g, '')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-      .replace(/^#{1,6}\s+/gm, '')
-      .replace(/(\*\*|__)(.*?)\1/g, '$2')
-      .replace(/(\*|_)(.*?)\1/g, '$2')
-      .replace(/^\s*[-*+]\s+/gm, '')
-      .replace(/^\s*\d+\.\s+/gm, '')
-      .replace(/^>\s?/gm, '')
-      .replace(/\n{2,}/g, '. ')
-      .replace(/\n/g, ' ')
-      .trim();
+  if (current) {
+    chunks.push(current);
   }
+
+  return chunks;
+}
+
+private splitLongText(
+  text: string,
+  maxWords: number
+): string[] {
+  const words = text.split(/\s+/);
+  const chunks: string[] = [];
+
+  for (
+    let i = 0;
+    i < words.length;
+    i += maxWords
+  ) {
+    chunks.push(
+      words.slice(i, i + maxWords).join(' ')
+    );
+  }
+
+  return chunks;
+}
+
+private wordCount(text: string): number {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .length;
+}
+
+private stripMarkdown(md: string): string {
+  return md
+    // Code blocks
+    .replace(
+      /```[\s\S]*?```/g,
+      ' Code example omitted. '
+    )
+
+    // Inline code
+    .replace(/`([^`]+)`/g, '$1')
+
+    // Images
+    .replace(
+      /!\[([^\]]*)\]\([^)]+\)/g,
+      '$1'
+    )
+
+    // Links
+    .replace(
+      /\[([^\]]+)\]\([^)]+\)/g,
+      '$1'
+    )
+
+    // Markdown headings
+    .replace(/^#{1,6}\s+/gm, '')
+
+    // Bold / italic
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
+
+    // Unordered lists
+    .replace(/^\s*[-*+]\s+/gm, '')
+
+    // Ordered lists
+    .replace(/^\s*\d+\.\s+/gm, '')
+
+    // Block quotes
+    .replace(/^>\s?/gm, '')
+
+    // Horizontal rules
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+
+    // Excess whitespace
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 }
